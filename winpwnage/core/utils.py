@@ -1,6 +1,7 @@
 import os
 import ctypes
 import platform
+from subprocess import check_output
 
 try:
 	import _winreg	# Python 2
@@ -10,9 +11,6 @@ except ImportError:	# Python 3
 from .winstructures import *
 
 class disable_fsr():
-	"""
-	A class to disable file system redirection
-	"""
 	disable = ctypes.windll.kernel32.Wow64DisableWow64FsRedirection
 	revert = ctypes.windll.kernel32.Wow64RevertWow64FsRedirection
 
@@ -24,28 +22,53 @@ class disable_fsr():
 		if self.success:
 			self.revert(self.old_value)
 
-
 class payloads():
-	"""
-	Checks if payload exists on disk and if the
-	file extension is correct
-	"""
 	def exe(self, payload):
-		if os.path.isfile(os.path.join(payload)) and payload.endswith(".exe"):
+		if os.path.isfile(os.path.join(payload[0])) and payload[0].endswith(".exe"):
+			commandline = ""
+			for index, object in enumerate(payload):
+				if index >= len(payload)-1:
+					commandline += payload[index]
+				else:
+					commandline += payload[index] + " "
+			return True, commandline
+		else:
+			return False
+
+	#def dll(self, payload):
+	#	return bool(os.path.isfile(os.path.join(payload[0])) and payload[0].endswith(".dll"))
+
+class makecab():
+	def makecab(self, source, destination):
+		if not os.path.exists(source):
+			return False
+
+		exit_code = process().create("makecab.exe", params="{source} {destination}".format(source=source,
+									destination=destination), window=False, get_exit_code=True)
+		if exit_code == 0:
 			return True
 		else:
-			# Check if payload is a bin with args (e.g C:\\Windows\\System32\\cmd.exe /k whoami)
-			return bool(os.path.isfile(payload.split(' ')[0]))
+			return False
 
-	def dll(self, payload):
-		return bool(os.path.isfile(os.path.join(payload)) and payload.endswith(".dll"))
+class wusa():
+	def extract(self, cabinet, destination):
+		if not os.path.exists(cabinet):
+			return False
 
+		results = process().create("wusa.exe", params="{cabinet} /extract:{destination} /quiet".format(cabinet=cabinet,
+									destination=destination), window=False, get_exit_code=True)
+		if results == 0:
+			try:
+				os.remove(cabinet)
+			except Exception as error:
+				pass
+			finally:
+				return True
+		else:
+			return False
 
 class process():
-	"""
-	A class to spawn, elevate or terminate processes
-	"""
-	def create(self, payload, params='', window=False, get_exit_code=False):
+	def create(self, payload, params="", window=False, get_exit_code=False):
 		shinfo = ShellExecuteInfoW()
 		shinfo.cbSize = sizeof(shinfo)
 		shinfo.fMask = SEE_MASK_NOCLOSEPROCESS
@@ -65,7 +88,7 @@ class process():
 		else:
 			return False
 
-	def runas(self, payload, params=''):
+	def runas(self, payload, params=""):
 		shinfo = ShellExecuteInfoW()
 		shinfo.cbSize = sizeof(shinfo)
 		shinfo.fMask = SEE_MASK_NOCLOSEPROCESS
@@ -131,12 +154,11 @@ class process():
 				pass
 		return False
 
-
 class registry():
 	def __init__(self):
 		self.hkeys = {
-			'hkcu': _winreg.HKEY_CURRENT_USER,
-			'hklm': _winreg.HKEY_LOCAL_MACHINE
+			"hkcu": _winreg.HKEY_CURRENT_USER,
+			"hklm": _winreg.HKEY_LOCAL_MACHINE
 		}
 
 	def modify_key(self, hkey, path, name, value, create=False):
@@ -151,7 +173,7 @@ class registry():
 		except Exception as e:
 			return False
 
-	def remove_key(self, hkey, path, name='', delete_key=False):
+	def remove_key(self, hkey, path, name="", delete_key=False):
 		try:
 			if delete_key:
 				_winreg.DeleteKey(self.hkeys[hkey], path)
@@ -163,33 +185,106 @@ class registry():
 		except Exception as e:
 			return False
 
+class whoami():
+	def __init__(self):
+		self.privs = {"SeIncreaseQuotaPrivilege" : "Adjust memory quotas for a process",
+					"SeSecurityPrivilege" : "Manage auditing and security log",
+					"SeTakeOwnershipPrivilege" : "Take ownership of files or other objects",
+					"SeLoadDriverPrivilege" : "Load and unload device drivers",
+					"SeSystemProfilePrivilege" : "Profile system performance",
+					"SeSystemtimePrivilege" : "Change the system time",
+					"SeProfileSingleProcessPrivilege" : "Profile single process",
+					"SeIncreaseBasePriorityPrivilege" : "Increase scheduling priority",
+					"SeCreatePagefilePrivilege" : "Create a pagefile",
+					"SeBackupPrivilege" : "Back up files and directories",
+					"SeRestorePrivilege" : "Restore files and directories",
+					"SeShutdownPrivilege" : "Shut down the system",
+					"SeDebugPrivilege" : "Debug programs",
+					"SeSystemEnvironmentPrivilege" : "Modify firmware environment values",
+					"SeChangeNotifyPrivilege" : "Bypass traverse checking",
+					"SeRemoteShutdownPrivilege" : "Force shutdown from a remote system",
+					"SeUndockPrivilege" : "Remove computer from docking station",
+					"SeManageVolumePrivilege" : "Perform volume maintenance tasks",
+					"SeImpersonatePrivilege" : "Impersonate a client after authentication",
+					"SeCreateGlobalPrivilege" : "Create global objects",
+					"SeIncreaseWorkingSetPrivilege" : "Increase a process working set",
+					"SeTimeZonePrivilege" : "Change the time zone",
+					"SeCreateSymbolicLinkPrivilege" : "Create symbolic links",
+					"SeDelegateSessionUserImpersonatePrivilege" : "Obtain an impersonation token for another user in same session"}
+
+		self.sids = {"S-1-2-0" : "Local",
+					"S-1-0-0" : "Nobody",
+					"S-1-1-0" : "Everyone",
+					"S-1-5-32-545" : "Users",
+					"S-1-5-32-546" : "Guests",
+					"S-1-0" : "Null Authority",
+					"S-1-1" : "World Authority",
+					"S-1-2" : "Local Authority",
+					"S-1-5-4" : "Interactive",
+					"S-1-2-1" : "Console Logon",
+					"S-1-5-18" : "Local System",
+					"S-1-5-19" : "Local Service",
+					"S-1-5-20" : "Network Service",
+					"S-1-5-32-547" : "Power Users",
+					"S-1-5-15" : "This Organization",
+					"S-1-5-32-544" : "Administrators",
+					"S-1-5-11" : "Authenticated Users",
+					"S-1-5-32-549" : "Server Operators",
+					"S-1-5-32-550" : "Print Operators",
+					"S-1-5-32-551" : "Backup Operators",
+					"S-1-5-32-548" : "Account Operators",
+					"S-1-5-64-10" : "NTLM Authentication",
+					"S-1-5-32-559" : "Builtin\Performance Log Users",
+					"S-1-5-32-582" : "Storage Replica Administrators"}
+
+	def elevated(self):
+		return bool(ctypes.windll.shell32.IsUserAnAdmin())
+
+	def privileges(self):
+		return check_output(["whoami", "/priv", "/fo", "table",
+								"|", "findstr", "Enabled"], shell=True).decode("latin1")
+	def groups(self):
+		return check_output(["whoami", "/groups"], shell=True).decode("latin1")
+
+	def getgroups(self):
+		result = []
+		groups = self.groups()
+		for sid in self.sids:
+			if sid in groups:
+				result.append(self.sids[sid])
+		return result
+
+	def getprivileges(self):
+		result = []
+		privs = self.privileges()
+		for priv in self.privs:
+			if priv in privs:
+				result.append(priv)
+		return result
 
 class information():
-	"""
-	A class to handle all the information gathering
-	"""
 	def system_directory(self):
-		return os.path.join(os.environ.get('windir'), 'system32')
-	
+		return os.path.join(os.environ.get("windir"), "system32")
+
 	def system_drive(self):
-		return os.environ.get('systemdrive')
-	
+		return os.environ.get("systemdrive")
+
 	def windows_directory(self):
-		return os.environ.get('windir')
-			
+		return os.environ.get("windir")
+
 	def architecture(self):
 		return platform.machine()
 
 	def username(self):
-		return os.environ.get('username')
+		return os.environ.get("username")
 
 	def admin(self):
 		return bool(ctypes.windll.shell32.IsUserAnAdmin())
 
 	def build_number(self):
 		try:
-			key = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE, os.path.join(
-				"Software\\Microsoft\\Windows NT\\CurrentVersion"), 0, _winreg.KEY_READ)
+			key = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE,
+									os.path.join("Software\\Microsoft\\Windows NT\\CurrentVersion"), 0, _winreg.KEY_READ)
 			cbn = _winreg.QueryValueEx(key, "CurrentBuildNumber")
 			_winreg.CloseKey(key)
 		except Exception as error:
@@ -199,13 +294,14 @@ class information():
 
 	def uac_level(self):
 		try:
-			key = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE, os.path.join(
-				"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System"), 0, _winreg.KEY_READ)
+			key = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE,
+									os.path.join("Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System"), 0, _winreg.KEY_READ)
 			cpba = _winreg.QueryValueEx(key, "ConsentPromptBehaviorAdmin")
 			cpbu = _winreg.QueryValueEx(key, "ConsentPromptBehaviorUser")
 			posd = _winreg.QueryValueEx(key, "PromptOnSecureDesktop")
 			_winreg.CloseKey(key)
 		except Exception as error:
 			return False
-		cpba_cpbu_posd = (cpba[0], cpbu[0], posd[0])
-		return {(0, 3, 0): 1, (5, 3, 0): 2, (5, 3, 1): 3, (2, 3, 1): 4}.get(cpba_cpbu_posd, False)
+		else:
+			cpba_cpbu_posd = (cpba[0], cpbu[0], posd[0])
+			return {(0, 3, 0): 1, (5, 3, 0): 2, (5, 3, 1): 3, (2, 3, 1): 4}.get(cpba_cpbu_posd, False)
